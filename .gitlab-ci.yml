@@ -1,0 +1,12 @@
+stages:
+  - validate
+
+validate_wordpress:
+  stage: validate
+  script:
+    - echo "Validating WordPress project files..."
+    - test -f index.php
+    - test -d wp-admin
+    - test -d wp-includes
+    - test ! -f wp-config.php
+    - echo "WordPress validation successful!"

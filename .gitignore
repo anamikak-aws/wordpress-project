@@ -1,0 +1,6 @@
+wp-config.php
+wp-content/uploads/
+.env
+*.pem
+*.key
+.DS_Store
