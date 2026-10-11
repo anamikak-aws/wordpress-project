@@ -20,5 +20,17 @@ pipeline {
                 '''
             }
         }
+
+        stage('Deploy Test') {
+            steps {
+                sh '''
+                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
+                    -o StrictHostKeyChecking=accept-new \
+                    ec2-user@10.0.2.197 \
+                    'sudo touch /tmp/jenkins-deploy-test && echo "Deployment test successful"'
+                '''
+            }
+        }
     }
 }
+
