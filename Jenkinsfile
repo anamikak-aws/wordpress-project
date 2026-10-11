@@ -2,8 +2,15 @@
 pipeline {
     agent any
 
-    stages {
+    environment {
+        WP_PATH = '/usr/share/nginx/html'
+        DEPLOY_KEY = '/var/lib/jenkins/.ssh/key1.pem'
+        DEPLOY_USER = 'ec2-user'
+        WP_INSTANCES = '10.0.2.197 10.0.2.243 10.0.2.146'
+        ALB_URL = 'http://wordpress-alb-1638523939.ap-south-1.elb.amazonaws.com'
+    }
 
+    stages {
         stage('Checkout Verification') {
             steps {
                 echo 'Checking GitHub source code'
@@ -15,57 +22,79 @@ pipeline {
             steps {
                 sh '''
                     test -f index.php
-                    test -f wp-config-sample.php
+                    test -f wp-includes/version.php
+                    test -d wp-content
                     test ! -f wp-config.php
-                    echo "WordPress files validated successfully"
+                    echo "Source files validated"
                 '''
             }
         }
 
-        stage('Deployment Pre-check') {
+        stage('Pre-deployment Checks') {
             steps {
                 sh '''
-                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
-                    -o StrictHostKeyChecking=accept-new \
-                    ec2-user@10.0.2.197 \
-                    'test -f /usr/share/nginx/html/wp-config.php &&
-                     test -f /usr/share/nginx/html/index.php &&
-                     test -d /usr/share/nginx/html/wp-content &&
-                     echo "Deployment pre-check passed"'
-                '''
-            }
-        }
-
-        stage('Deploy Test') {
-            steps {
-                sh '''
-                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
-                    -o StrictHostKeyChecking=accept-new \
-                    ec2-user@10.0.2.197 \
-                    'sudo touch /tmp/jenkins-deploy-test &&
-                     echo "SSH deployment test successful"'
-                '''
-            }
-        }
-
-        stage('WordPress Health Check - All Instances') {
-            steps {
-                sh '''
-                    for IP in 10.0.2.197 10.0.2.243 10.0.2.146; do
-
-                        echo "Checking WordPress instance: $IP"
-
-                        STATUS=$(ssh -i /var/lib/jenkins/.ssh/key1.pem \
+                    for IP in $WP_INSTANCES; do
+                        echo "Checking $IP"
+                        ssh -i "$DEPLOY_KEY" \
                             -o StrictHostKeyChecking=accept-new \
-                            ec2-user@$IP \
-                            'curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://localhost/')
+                            "$DEPLOY_USER@$IP" \
+                            "sudo test -f $WP_PATH/wp-config.php &&
+                             sudo test -f $WP_PATH/index.php"
+                    done
+                    echo "All instances have existing WordPress configuration"
+                '''
+            }
+        }
 
-                        echo "$IP HTTP Status: $STATUS"
+        stage('Deploy Application Files') {
+            steps {
+                sh '''
+                    set -eu
 
+                    # Deploy only application content tracked in Git.
+                    # Do not delete server files absent from Git.
+                    # Never copy wp-config.php from GitHub.
+                    for IP in $WP_INSTANCES; do
+                        echo "Deploying to $IP"
+
+                        rsync -av \
+                            --exclude='/.git/' \
+                            --exclude='/wp-config.php' \
+                            --exclude='/wp-content/uploads/' \
+                            --exclude='/wp-content/cache/' \
+                            --exclude='/wp-content/upgrade/' \
+                            -e "ssh -i $DEPLOY_KEY -o StrictHostKeyChecking=accept-new" \
+                            ./ "$DEPLOY_USER@$IP:/tmp/wordpress-deploy/"
+
+                        ssh -i "$DEPLOY_KEY" \
+                            -o StrictHostKeyChecking=accept-new \
+                            "$DEPLOY_USER@$IP" \
+                            'sudo rsync -av \
+                              --exclude="wp-config.php" \
+                              --exclude="wp-content/uploads/" \
+                              --exclude="wp-content/cache/" \
+                              --exclude="wp-content/upgrade/" \
+                              /tmp/wordpress-deploy/ \
+                              /usr/share/nginx/html/ &&
+                             sudo rm -rf /tmp/wordpress-deploy'
+                    done
+                '''
+            }
+        }
+
+        stage('WordPress Health Check') {
+            steps {
+                sh '''
+                    set -eu
+                    for IP in $WP_INSTANCES; do
+                        STATUS=$(ssh -i "$DEPLOY_KEY" \
+                            -o StrictHostKeyChecking=accept-new \
+                            "$DEPLOY_USER@$IP" \
+                            'curl -s -o /dev/null -w "%{http_code}" \
+                             --max-time 10 http://localhost/')
+                        echo "$IP HTTP $STATUS"
                         test "$STATUS" = "200"
                     done
-
-                    echo "All WordPress instances passed health checks"
                 '''
             }
         }
@@ -74,34 +103,9 @@ pipeline {
             steps {
                 sh '''
                     STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                    --max-time 15 \
-                    http://wordpress-alb-1638523939.ap-south-1.elb.amazonaws.com/)
-
-                    echo "ALB HTTP Status: $STATUS"
-
+                        --max-time 15 "$ALB_URL/")
+                    echo "ALB HTTP $STATUS"
                     test "$STATUS" = "200"
-                    echo "ALB health check passed"
-                '''
-            }
-        }
-
-        stage('Deploy Test File') {
-            steps {
-                sh '''
-                    test -f jenkins-deploy-test.txt
-
-                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
-                    -o StrictHostKeyChecking=accept-new \
-                    ec2-user@10.0.2.197 \
-                    'sudo tee /usr/share/nginx/html/jenkins-deploy-test.txt >/dev/null' \
-                    < jenkins-deploy-test.txt
-
-                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
-                    -o StrictHostKeyChecking=accept-new \
-                    ec2-user@10.0.2.197 \
-                    'test "$(curl -s http://localhost/jenkins-deploy-test.txt)" = "Jenkins automatic deployment successful"'
-
-                    echo "Test file deployed and verified successfully"
                 '''
             }
         }
@@ -109,11 +113,10 @@ pipeline {
 
     post {
         success {
-            echo 'SUCCESS: WordPress CI/CD pipeline completed all checks.'
+            echo 'SUCCESS: Deployment and health checks passed.'
         }
-
         failure {
-            echo 'FAILED: Check the failed stage in the Jenkins console output.'
+            echo 'FAILED: Check the failed stage in Jenkins Console Output.'
         }
     }
 }
