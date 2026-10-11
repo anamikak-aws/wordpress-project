@@ -46,5 +46,19 @@ pipeline {
                 '''
             }
         }
+
+        stage('WordPress Health Check') {
+            steps {
+                sh '''
+                    STATUS=$(ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
+                    -o StrictHostKeyChecking=accept-new \
+                    ec2-user@10.0.2.197 \
+                    'curl -s -o /dev/null -w "%{http_code}" http://localhost/')
+
+                    echo "WordPress HTTP status: $STATUS"
+                    test "$STATUS" = "200"
+                '''
+            }
+        }
     }
 }
