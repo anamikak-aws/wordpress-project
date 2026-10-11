@@ -5,7 +5,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                echo 'Automatic polling test'
+                echo 'Automatic trigger test'
                 sh 'git rev-parse --short HEAD'
             }
         }
