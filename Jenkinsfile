@@ -1,4 +1,4 @@
-
+```groovy
 pipeline {
     agent any
 
@@ -60,5 +60,27 @@ pipeline {
                 '''
             }
         }
+
+        stage('Deploy Test File') {
+            steps {
+                sh '''
+                    test -f jenkins-deploy-test.txt
+
+                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
+                    -o StrictHostKeyChecking=accept-new \
+                    ec2-user@10.0.2.197 \
+                    'sudo tee /usr/share/nginx/html/jenkins-deploy-test.txt >/dev/null' \
+                    < jenkins-deploy-test.txt
+
+                    ssh -i /var/lib/jenkins/.ssh/wordpress_deploy \
+                    -o StrictHostKeyChecking=accept-new \
+                    ec2-user@10.0.2.197 \
+                    'test "$(curl -s http://localhost/jenkins-deploy-test.txt)" = "Jenkins automatic deployment successful"'
+
+                    echo "Test file deployed and verified successfully"
+                '''
+            }
+        }
     }
 }
+```
